@@ -1,20 +1,17 @@
 const mongoose = require('mongoose');
 
-const agendaSchema = new mongoose.Schema({
-  shownDate: { type: String, unique: true, required: true },
+const questionSchema = new mongoose.Schema({
+  shownDate: { type: String, required: true },
   date: Date,
   group: String,
-  agendaItems: [
-    {
-      rating: Number,
-      name: String,
-      description: String,
-      actualTo: Date,
-      opinions: [{ opinion: String, user: String }],
-      total: String,
-      formulation: String,
-    },
-  ],
+  rating: Number,
+  votes: [{ user: String, rating: Number }],
+  name: String,
+  description: String,
+  actualTo: Date,
+  opinions: [{ opinion: String, user: String }],
+  total: String,
+  formulation: String,
 });
 
-module.exports = mongoose.model('Agenda', agendaSchema);
+module.exports = mongoose.model('Question', questionSchema);

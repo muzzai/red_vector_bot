@@ -1,8 +1,6 @@
-const Agenda = require('../models/agenda');
+const Question = require('../models/agenda');
 const Scene = require('telegraf/scenes/base');
 const Markup = require('telegraf/markup');
-const { log } = require('telegraf/scenes/base');
-
 const agendaScene = new Scene('agenda');
 
 const navigate = (ctx) =>
@@ -10,40 +8,71 @@ const navigate = (ctx) =>
 
 agendaScene.enter(async (ctx) => {
   try {
-    const agenda = await Agenda.findOne({
-      date: { $lte: Date.now() },
-    });
-    const username = ctx.update.message.from.username;
     ctx.session.index = 0;
-    ctx.session.len = agenda.agendaItems.length;
-    ctx.session.shownDate = agenda.shownDate;
-    ctx.session.username = username;
-    ctx.session.agenda = agenda;
-    const questions = agenda.agendaItems.reduce(
-      (text, x, i) => `${text}${i + 1} вопрос: ${x.name}\n`,
-      ''
-    );
-
-    ctx.reply(
-      questions,
-      Markup.inlineKeyboard([
-        Markup.callbackButton('Ответить на вопросы', 'answer'),
-        Markup.callbackButton('Выйти', 'leave'),
-      ]).extra()
-    );
+    ctx.session.username = ctx.update.message.from.username;
+    await renderInitialMessage(ctx);
   } catch (err) {
-    console.log(err);
+    ctx.reply(err.message);
   }
 });
-agendaScene.leave((ctx) => ctx.reply('пока'));
+agendaScene.leave((ctx) => {
+  ctx.reply(`Добавление вопроса к встрече ${ctx.session.date}`);
+});
+
+const renderInitialMessage = async (ctx) => {
+  const agenda = await Question.find({
+    date: ctx.session.date,
+    group: ctx.session.selectedGroup.groupName,
+  });
+
+  console.log({ agenda });
+
+  if (!agenda.length) {
+    return ctx.reply(
+      'Вопросов пока нет',
+      Markup.inlineKeyboard([
+        [Markup.callbackButton('Добавить вопрос', 'addQuestion')],
+        [Markup.callbackButton('Выйти', 'leave')],
+      ]).extra()
+    );
+  }
+
+  ctx.session.len = agenda.length;
+  ctx.session.agenda = agenda;
+  const getTotalRating = ({ votes }) => {
+    if (votes.length) {
+      return votes.reduce((sum, x) => sum + x.rating, 0) / votes.length;
+    }
+    return 0;
+  };
+
+  const questionsText = agenda
+    .sort((a, b) => getTotalRating(b) - getTotalRating(a))
+    .reduce((text, x) => `${text}${getTotalRating(x)} баллов: ${x.name}\n`, '');
+
+  ctx.reply(
+    questionsText,
+    Markup.inlineKeyboard([
+      [Markup.callbackButton('Ответить на вопросы', 'answer')],
+      [Markup.callbackButton('Добавить вопрос', 'addQuestion')],
+      [Markup.callbackButton('Выйти', 'leave')],
+    ]).extra()
+  );
+};
+
+agendaScene.action('addQuestion', (ctx) => {
+  ctx.session.toAddingQuestion = true;
+  ctx.scene.enter('addQuestion');
+});
 
 agendaScene.action('viewOpinions', (ctx) => {
-  const opinions = ctx.session.agenda.agendaItems[
-    ctx.session.index
-  ].opinions.reduce((text, opinion) => {
-    return `${text}${opinion.user} считает, что ${opinion.opinion}\n`;
-  }, '');
-  ctx.reply(
+  const opinions = ctx.session.agenda[ctx.session.index].opinions.reduce(
+    (text, opinion) => {
+      return `${text}${opinion.user} считает, что \n> ${opinion.opinion}\n`;
+    },
+    ''
+  );
+  ctx.editMessageText(
     opinions,
     Markup.inlineKeyboard([
       Markup.callbackButton('назад к вопросу', 'answer'),
@@ -65,33 +94,74 @@ agendaScene.action('prev', (ctx) => {
   navigate(ctx);
 });
 
-agendaScene.action('back', (ctx) => {
-  renderInitialMessage(ctx);
+agendaScene.action('back', async (ctx) => {
+  await renderInitialMessage(ctx);
 });
 
+agendaScene.action('rate', (ctx) => {
+  ctx.editMessageText(
+    renderQuestion(ctx),
+    Markup.inlineKeyboard([
+      ratingButtons.slice(0, 5),
+      ratingButtons.slice(5),
+    ]).extra()
+  );
+});
+
+const ratingButtons = (() => {
+  return Array(10)
+    .fill()
+    .map((x, ith) => {
+      const i = ith + 1;
+      agendaScene.action(`${i}`, async (ctx) => {
+        const question = ctx.session.agenda[ctx.session.index];
+        const index = question.votes.findIndex(
+          (x) => x.user === ctx.session.username
+        );
+        if (index === -1) {
+          question.votes.push({ user: ctx.session.username, rating: i });
+        } else {
+          question.votes[index].rating = i;
+        }
+        await question.save();
+        navigate(ctx);
+      });
+      return Markup.callbackButton(`${i}`, `${i}`);
+    });
+})().reverse();
+
 agendaScene.on('text', async (ctx) => {
-  const usersOpinion = ctx.session.agenda.agendaItems[
-    ctx.session.index
-  ].opinions.find((opinion) => opinion.user === ctx.message.from.username);
+  const {
+    session: { agenda, index, username },
+  } = ctx;
+  if (!agenda) {
+    return;
+  }
+  const question = agenda[index];
+  const usersOpinion = agenda[index].opinions.find(
+    (opinion) => opinion.user === username
+  );
   if (usersOpinion) {
-    const index = ctx.session.agenda.agendaItems[
-      ctx.session.index
-    ].opinions.indexOf(usersOpinion);
-    ctx.session.agenda.agendaItems[ctx.session.index].opinions[index] = {
-      user: ctx.message.from.username,
+    const opinionIndex = agenda[index].opinions.indexOf(usersOpinion);
+    question[opinionIndex] = {
+      user: username,
       opinion: ctx.message.text,
     };
     ctx.reply('Мнение изменено');
   } else {
-    ctx.session.agenda.agendaItems[ctx.session.index].opinions.push({
-      user: ctx.message.from.username,
+    question.opinions.push({
+      user: username,
       opinion: ctx.message.text,
     });
     ctx.reply('Мнение принято');
   }
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  ctx.reply(renderQuestion(ctx), renderButtons(ctx));
-  return;
+  try {
+    await question.save();
+    ctx.reply(renderQuestion(ctx), renderButtons(ctx));
+    return;
+  } catch (err) {
+    ctx.reply(err.message);
+  }
 });
 
 const toQuestionsButton = Markup.callbackButton('к вопросам', 'back');
@@ -106,26 +176,25 @@ const viewOpinionsButton = Markup.callbackButton(
   'viewOpinions'
 );
 
-const renderQuestion = ({
-  session: {
-    index,
-    agenda: { agendaItems },
-  },
-}) => {
-  const { name, description, formulation } = agendaItems[index];
+const renderQuestion = ({ session: { index, agenda } }) => {
+  const { name, description, formulation } = agenda[index];
   return `${name}\n\n${description}\n\n${formulation}`;
 };
 
-const renderNavButtons = (ctx) => {
-  const index = ctx.session.index;
-  const questionLength = ctx.session.len;
+const renderNavButtons = ({ session: { index, len } }) => {
+  if (index === 0 && index - len === -1) return [toQuestionsButton];
   if (index === 0) return [toQuestionsButton, nextButton];
-  if (index - questionLength === -1) return [prevButton, toQuestionsButton];
+  if (index - len === -1) return [prevButton, toQuestionsButton];
   return [prevButton, toQuestionsButton, nextButton];
 };
 
+const renderRateButton = ({ session: { agenda, index, username } }) => {
+  const rated = agenda[index].votes.find((x) => x.user === username);
+  return Markup.callbackButton(rated ? 'Изменить оценку' : 'Оценить', 'rate');
+};
+
 const renderOpinionButtons = (ctx) => {
-  if (!ctx.session.agenda.agendaItems[ctx.session.index].opinions.length)
+  if (!ctx.session.agenda[ctx.session.index].opinions.length)
     return [leaveOpinionButton];
 
   return [viewOpinionsButton];
@@ -134,33 +203,13 @@ const renderOpinionButtons = (ctx) => {
 const renderButtons = (ctx) => {
   return Markup.inlineKeyboard([
     renderNavButtons(ctx),
-    renderOpinionButtons(ctx),
+    [...renderOpinionButtons(ctx), renderRateButton(ctx)],
   ]).extra();
 };
 
-const renderInitialMessage = (ctx) => {
-  const generalDescription = ctx.session.agenda.agendaItems.reduce(
-    (text, x) => `${text}${x.name}\n`,
-    ''
-  );
-  ctx.reply(
-    generalDescription,
-    Markup.inlineKeyboard([
-      Markup.callbackButton('Ответить на вопросы', 'answer'),
-      Markup.callbackButton('Выйти', 'leave'),
-    ]).extra()
-  );
-};
-
 agendaScene.action('leave', async (ctx) => {
-  try {
-    await ctx.session.agenda.save();
-    ctx.scene.leave();
-  } catch (err) {
-    console.log(err);
-    ctx.reply(err.message);
-    ctx.scene.leave();
-  }
+  ctx.scene.enter('main');
+  ctx.scene.leave();
 });
 
 module.exports = agendaScene;
