@@ -1,0 +1,19 @@
+{
+  "name": "red_vector_bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "mongoose": "^5.10.9",
+    "node-telegram-bot-api": "0.50.0"
+  },
+  "devDependencies": {
+    "prettier": "^2.1.2"
+  }
+}
