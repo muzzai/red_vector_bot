@@ -10,8 +10,10 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "dotenv": "^8.2.0",
+    "moment": "^2.29.1",
     "mongoose": "^5.10.9",
-    "node-telegram-bot-api": "0.50.0"
+    "telegraf": "^3.38.0"
   },
   "devDependencies": {
     "prettier": "^2.1.2"
