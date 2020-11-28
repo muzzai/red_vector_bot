@@ -52,7 +52,7 @@ agendaScene.action('exit', (ctx) => {
   agendaScene.leave();
 });
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const stage = new Stage([agendaScene], { ttl: 10 });
+const stage = new Stage([agendaScene]);
 bot.use(session());
 bot.use(stage.middleware());
 bot.command('test', (ctx) => ctx.scene.enter('test'));
